@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cosmic Replica: Planet Spawning with Outer Nebula Cloud Borders</title>
+    <!-- Three.js Library hosted on Cloudflare CDN (Whitelisted) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+
+        body {
+            background-color: #0a0d16;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* Viewport Canvas Container occupying full screen with no UI distractions */
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+            cursor: grab;
+        }
+
+        #canvas-container:active {
+            cursor: grabbing;
+        }
+
+        /* Container for 2D UI overlay labels projected from 3D coordinates */
+        #labels-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 5;
+            pointer-events: none;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+        }
+
+        /* Sci-Fi stylized planetary label overlays */
+        .planet-label {
+            position: absolute;
+            left: 0;
+            top: 0;
+            color: #ffffff;
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 1.5px;
+            padding: 3px 8px;
+            background: rgba(10, 13, 22, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 4px;
+            white-space: nowrap;
+            display: none;
+            text-transform: uppercase;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+            pointer-events: none;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+
+        /* Subtle pointing arrow design beneath labels */
+        .planet-label::before {
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-width: 4px 4px 0;
+            border-style: solid;
+            border-color: rgba(10, 13, 22, 0.85) transparent;
+            display: block;
+            width: 0;
+        }
+
+        /* Subtle persistent hint about viewport navigation */
+        #interaction-hint {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.4);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            pointer-events: none;
+            z-index: 10;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <div id="labels-container"></div>
+    <div id="interaction-hint">Drag screen to orbit the growing cosmic matrix shell</div>
+
+    <script>
+        // Static Simulation Engine Configuration
+        const CONFIG = {
+            maxRadius: 4.5,
+            minRadius: 0.8,         // Core point where the big bang expansion restarts
+            growthSpeed: 1.0,       // Expansion velocity rate
+            sphereColor: 0x00f2fe,  // Cyan Aurora outer event horizon
+            wireframeOpacity: 0.15,
+            solidOpacity: 0.25,
+            cloudBorderColor: 0x7c4dff // Soft cosmic violet/purple for the nebula borders
+        };
+
+        // Engine State Properties
+        let currentRadius = CONFIG.minRadius;
+        
+        // Three.js Core Variables
+        let scene, camera, renderer;
+        let sphereSolid, sphereWireframe;
+        let gridContainer, axesHelper, boundaryClouds;
+        let planets = []; // Stores inner planet orbital matrices, labels, visibility states, thresholds, and dust systems
+        
+        // Spherical Coordinates Viewport Camera Navigation Setup
+        let isDragging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        let theta = 45 * Math.PI / 180; // Azimuthal angle
+        let phi = 60 * Math.PI / 180;   // Polar angle
+        const cameraDistance = 14;      // Placed perfectly outside the maximum sphere matrix
+
+        // Initialize ThreeJS Scene Environment
+        function init() {
+            const container = document.getElementById('canvas-container');
+            const labelsContainer = document.getElementById('labels-container');
+            
+            // 1. Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0a0d16);
+            scene.fog = new THREE.FogExp2(0x0a0d16, 0.02);
+
+            // 2. Camera instantiation
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            updateCameraPosition();
+
+            // 3. Renderer configuration
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            // 4. Lighting design
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+            scene.add(ambientLight);
+
+            const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.9);
+            dirLight1.position.set(5, 12, 8);
+            scene.add(dirLight1);
+
+            const dirLight2 = new THREE.DirectionalLight(0x00f2fe, 0.5);
+            dirLight2.position.set(-6, -6, -6);
+            scene.add(dirLight2);
+
+            // 5. Build Tri-Planar Coordinate System Matrix Grids
+            gridContainer = new THREE.Group();
+            
+            // XZ Grid (Floor Plane)
+            const gridXZ = new THREE.GridHelper(14, 28, 0x00f2fe, 0x1a2233);
+            gridContainer.add(gridXZ);
+
+            // XY Grid (Coronal Plane)
+            const gridXY = new THREE.GridHelper(14, 28, 0xff4757, 0x1a2233);
+            gridXY.rotation.x = Math.PI / 2;
+            gridContainer.add(gridXY);
+
+            // YZ Grid (Sagittal Plane)
+            const gridYZ = new THREE.GridHelper(14, 28, 0x54a0ff, 0x1a2233);
+            gridYZ.rotation.z = Math.PI / 2;
+            gridContainer.add(gridYZ);
+
+            scene.add(gridContainer);
+
+            // Custom thick colorful coordinate lines
+            axesHelper = new THREE.Group();
+            function createAxisLine(start, end, colorHex) {
+                const points = [start, end];
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const material = new THREE.LineBasicMaterial({ color: colorHex, depthWrite: false });
+                return new THREE.Line(geometry, material);
+            }
+            axesHelper.add(createAxisLine(new THREE.Vector3(-7, 0, 0), new THREE.Vector3(7, 0, 0), 0xff4757)); // X (Red)
+            axesHelper.add(createAxisLine(new THREE.Vector3(0, -7, 0), new THREE.Vector3(0, 7, 0), 0x2ed573)); // Y (Green)
+            axesHelper.add(createAxisLine(new THREE.Vector3(0, 0, -7), new THREE.Vector3(0, 0, 7), 0x54a0ff)); // Z (Blue)
+            scene.add(axesHelper);
+
+            // 6. Instantiate Main Outer Event Horizon Sphere
+            const sphereGeo = new THREE.SphereGeometry(1, 48, 48);
+
+            // Translucent Solid Layer Mesh
+            const materialSolid = new THREE.MeshPhongMaterial({
+                color: CONFIG.sphereColor,
+                transparent: true,
+                opacity: CONFIG.solidOpacity,
+                shininess: 90,
+                specular: 0xffffff,
+                side: THREE.DoubleSide
+            });
+            sphereSolid = new THREE.Mesh(sphereGeo, materialSolid);
+            scene.add(sphereSolid);
+
+            // Holographic Wireframe Shell Layer
+            const materialWireframe = new THREE.MeshBasicMaterial({
+                color: 0xffffff,
+                wireframe: true,
+                transparent: true,
+                opacity: CONFIG.wireframeOpacity,
+                side: THREE.DoubleSide
+            });
+            sphereWireframe = new THREE.Mesh(sphereGeo, materialWireframe);
+            scene.add(sphereWireframe);
+
+            // --- 6b. Generate Spherical Cloud Nebula Border ---
+            const cloudParticleCount = 2000;
+            const cloudGeometry = new THREE.BufferGeometry();
+            const cloudPositions = new Float32Array(cloudParticleCount * 3);
+            const cloudColors = new Float32Array(cloudParticleCount * 3);
+
+            const colorCloud1 = new THREE.Color(CONFIG.cloudBorderColor);
+            const colorCloud2 = new THREE.Color(CONFIG.sphereColor);
+
+            for (let i = 0; i < cloudParticleCount; i++) {
+                // Distribute particles evenly over the spherical surface of max expansion border
+                const thetaVal = Math.random() * Math.PI * 2;
+                const phiVal = Math.acos((Math.random() * 2) - 1);
+                
+                // Introduce thickness noise variance so it behaves like puffy layered dust bands
+                const variance = (Math.random() - 0.5) * 0.5; 
+                const r = CONFIG.maxRadius + variance;
+
+                cloudPositions[i * 3] = r * Math.sin(phiVal) * Math.cos(thetaVal);
+                cloudPositions[i * 3 + 1] = r * Math.sin(phiVal) * Math.sin(thetaVal);
+                cloudPositions[i * 3 + 2] = r * Math.cos(phiVal);
+
+                // Blend two cosmic color palettes over the border coordinates
+                const mixedColor = colorCloud1.clone().lerp(colorCloud2, Math.random());
+                cloudColors[i * 3] = mixedColor.r;
+                cloudColors[i * 3 + 1] = mixedColor.g;
+                cloudColors[i * 3 + 2] = mixedColor.b;
+            }
+
+            cloudGeometry.setAttribute('position', new THREE.BufferAttribute(cloudPositions, 3));
+            cloudGeometry.setAttribute('color', new THREE.BufferAttribute(cloudColors, 3));
+
+            const cloudMaterial = new THREE.PointsMaterial({
+                size: 0.35, // Larger overlapping sizes to make fluffy nebula borders
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.35,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                sizeAttenuation: true
+            });
+
+            boundaryClouds = new THREE.Points(cloudGeometry, cloudMaterial);
+            scene.add(boundaryClouds);
+
+            // 7. Generate Scaled Planetary Population Pool with Cosmic Identifier Tags
+            const planetSpecs = [
+                { name: "Aurelia", baseRadius: 0.04, normalizedOrbit: 0.22, speed: 1.8, color: 0xff4757, tilt: 0.2, spawnThreshold: 0.8 }, 
+                { name: "Borealis", baseRadius: 0.05, normalizedOrbit: 0.32, speed: 1.4, color: 0x2ed573, tilt: -0.1, spawnThreshold: 1.3 },
+                { name: "Caelum", baseRadius: 0.06, normalizedOrbit: 0.44, speed: 1.1, color: 0xffa502, tilt: 0.4, spawnThreshold: 1.8 },
+                { name: "Draconis", baseRadius: 0.05, normalizedOrbit: 0.54, speed: 0.9, color: 0x1e90ff, tilt: -0.3, spawnThreshold: 2.3 },
+                { name: "Eridani", baseRadius: 0.06, normalizedOrbit: 0.64, speed: 0.7, color: 0x9b59b6, tilt: 0.5, spawnThreshold: 2.8 },
+                { name: "Helios", baseRadius: 0.05, normalizedOrbit: 0.74, speed: 0.6, color: 0x00d2d3, tilt: -0.4, spawnThreshold: 3.3 },
+                { name: "Hyperion", baseRadius: 0.07, normalizedOrbit: 0.84, speed: 0.5, color: 0xff6b6b, tilt: 0.2, spawnThreshold: 3.8 },
+                { name: "Zephyrus", baseRadius: 0.06, normalizedOrbit: 0.92, speed: 0.4, color: 0xfeca57, tilt: -0.2, spawnThreshold: 4.2 }  
+            ];
+
+            planetSpecs.forEach((spec) => {
+                const planetGeo = new THREE.SphereGeometry(1, 24, 24);
+                const planetMat = new THREE.MeshPhongMaterial({
+                    color: spec.color,
+                    shininess: 60,
+                    specular: 0xffffff
+                });
+                const planetMesh = new THREE.Mesh(planetGeo, planetMat);
+                
+                // Add an orbital track trace ring that dynamically scales
+                const ringGeo = new THREE.RingGeometry(spec.normalizedOrbit - 0.005, spec.normalizedOrbit + 0.005, 64);
+                const ringMat = new THREE.MeshBasicMaterial({ 
+                    color: spec.color, 
+                    side: THREE.DoubleSide, 
+                    transparent: true, 
+                    opacity: 0.15 
+                });
+                const orbitRing = new THREE.Mesh(ringGeo, ringMat);
+                orbitRing.rotation.x = Math.PI / 2 + spec.tilt;
+                
+                scene.add(orbitRing);
+                scene.add(planetMesh);
+
+                // --- Primordial Localized Dust Cloud Particle System Setup ---
+                const particleCount = 250; 
+                const dustGeometry = new THREE.BufferGeometry();
+                const positions = new Float32Array(particleCount * 3);
+                const velocities = new Float32Array(particleCount * 3);
+
+                for (let i = 0; i < particleCount; i++) {
+                    const thetaVal = Math.random() * Math.PI * 2;
+                    const phiVal = Math.acos((Math.random() * 2) - 1);
+                    const r = 0.02 + Math.random() * 0.08;
+
+                    positions[i * 3] = r * Math.sin(phiVal) * Math.cos(thetaVal);
+                    positions[i * 3 + 1] = r * Math.sin(phiVal) * Math.sin(thetaVal);
+                    positions[i * 3 + 2] = r * Math.cos(phiVal);
+
+                    velocities[i * 3] = positions[i * 3] * 5.0;
+                    velocities[i * 3 + 1] = positions[i * 3 + 1] * 5.0;
+                    velocities[i * 3 + 2] = positions[i * 3 + 2] * 5.0;
+                }
+
+                dustGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+                const dustMaterial = new THREE.PointsMaterial({
+                    color: spec.color,
+                    size: 0.14, 
+                    transparent: true,
+                    opacity: 0.0,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false,
+                    sizeAttenuation: true
+                });
+
+                const dustPoints = new THREE.Points(dustGeometry, dustMaterial);
+                scene.add(dustPoints);
+
+                // --- Generate HTML Text Label for current planet ---
+                const label = document.createElement('div');
+                label.className = 'planet-label';
+                label.textContent = spec.name;
+                label.style.borderColor = '#' + spec.color.toString(16).padStart(6, '0');
+                labelsContainer.appendChild(label);
+
+                // Start invisible until expansion parameters validate existence
+                planetMesh.visible = false;
+                orbitRing.visible = false;
+                dustPoints.visible = false;
+
+                planets.push({
+                    mesh: planetMesh,
+                    orbitRing: orbitRing,
+                    dustPoints: dustPoints,
+                    dustGeometry: dustGeometry,
+                    labelEl: label,
+                    name: spec.name,
+                    basePositions: new Float32Array(positions), 
+                    dustVelocities: velocities,
+                    baseRadius: spec.baseRadius,
+                    normalizedOrbit: spec.normalizedOrbit,
+                    speed: spec.speed,
+                    tilt: spec.tilt,
+                    spawnThreshold: spec.spawnThreshold,
+                    angle: Math.random() * Math.PI * 2,
+                    hasSpawned: false,   
+                    dustAge: 0.0         
+                });
+            });
+
+            setupInteractionHandlers();
+        }
+
+        // Spherical coordinate calculations to plot camera positioning vectors outside looking in
+        function updateCameraPosition() {
+            camera.position.x = cameraDistance * Math.sin(phi) * Math.sin(theta);
+            camera.position.y = cameraDistance * Math.cos(phi);
+            camera.position.z = cameraDistance * Math.sin(phi) * Math.cos(theta);
+            camera.lookAt(0, 0, 0); 
+        }
+
+        // Setup mouse and touch handlers for external orbiting rotation
+        function setupInteractionHandlers() {
+            const container = document.getElementById('canvas-container');
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            // Desktop Mouse Rotation Handlers
+            container.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                previousMousePosition = { x: e.clientX, y: e.clientY };
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                const deltaX = e.clientX - previousMousePosition.x;
+                const deltaY = e.clientY - previousMousePosition.y;
+
+                theta -= deltaX * 0.006;
+                phi -= deltaY * 0.006;
+                phi = Math.max(0.05, Math.min(Math.PI - 0.05, phi));
+
+                previousMousePosition = { x: e.clientX, y: e.clientY };
+                updateCameraPosition();
+            });
+
+            window.addEventListener('mouseup', () => { isDragging = false; });
+
+            // Mobile Touchscreen Interaction Support 
+            container.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) {
+                    isDragging = true;
+                    previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                }
+            }, { passive: true });
+
+            window.addEventListener('touchmove', (e) => {
+                if (!isDragging || e.touches.length !== 1) return;
+                const deltaX = e.touches[0].clientX - previousMousePosition.x;
+                const deltaY = e.touches[0].clientY - previousMousePosition.y;
+
+                theta -= deltaX * 0.008;
+                phi -= deltaY * 0.008;
+                phi = Math.max(0.05, Math.min(Math.PI - 0.05, phi));
+
+                previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                updateCameraPosition();
+            }, { passive: true });
+
+            window.addEventListener('touchend', () => { isDragging = false; });
+        }
+
+        // Core Render Simulation Engine Loop
+        let lastTime = 0;
+        const tempV3 = new THREE.Vector3(); // Global helper object to minimize GC churn inside loops
+
+        function animate(timestamp) {
+            requestAnimationFrame(animate);
+
+            if (!lastTime) lastTime = timestamp;
+            const delta = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+
+            // 1. Dynamic Outer Sphere Scale Calculation (Continuous Loop Reset)
+            currentRadius += CONFIG.growthSpeed * delta;
+            if (currentRadius > CONFIG.maxRadius) {
+                currentRadius = CONFIG.minRadius; // Instantly collapse back to core origin
+                planets.forEach(p => {
+                    p.hasSpawned = false;
+                    p.dustAge = 0.0;
+                    p.dustPoints.material.opacity = 0.0;
+                    p.dustPoints.visible = false;
+                    p.labelEl.style.display = 'none'; 
+                });
+            }
+
+            // Apply unified outer transform scalar limits
+            sphereSolid.scale.setScalar(currentRadius);
+            sphereWireframe.scale.setScalar(currentRadius);
+
+            // Spin outer structure cage vectors slowly
+            sphereSolid.rotation.y += 0.08 * delta;
+            sphereWireframe.rotation.y += 0.08 * delta;
+
+            // Swirl the cosmic boundary clouds around the borders of the model
+            if (boundaryClouds) {
+                boundaryClouds.rotation.y += 0.02 * delta;
+                boundaryClouds.rotation.x += 0.01 * delta;
+            }
+
+            // 2. Animate Internal Planetary Positions & Volume Transitions
+            planets.forEach((planet) => {
+                if (currentRadius >= planet.spawnThreshold) {
+                    planet.mesh.visible = true;
+                    planet.orbitRing.visible = true;
+
+                    // Increment orbit angles
+                    planet.angle += planet.speed * delta;
+                    
+                    // Scale orbital tracking vector ring to lock cleanly inside expanding matrix bounds
+                    planet.orbitRing.scale.set(currentRadius, currentRadius, currentRadius);
+                    
+                    // Calculate precise core coordinates in space
+                    const currentOrbitRadius = planet.normalizedOrbit * currentRadius;
+                    const xPlanar = Math.cos(planet.angle) * currentOrbitRadius;
+                    const zPlanar = Math.sin(planet.angle) * currentOrbitRadius;
+                    
+                    const planetX = xPlanar;
+                    const planetY = zPlanar * Math.sin(planet.tilt);
+                    const planetZ = zPlanar * Math.cos(planet.tilt);
+
+                    planet.mesh.position.set(planetX, planetY, planetZ);
+                    
+                    // Dynamically scale inner mass sizes alongside cosmos framework scale
+                    const currentPlanetScale = planet.baseRadius * currentRadius;
+                    planet.mesh.scale.setScalar(currentPlanetScale);
+                    planet.mesh.rotation.y += 0.5 * delta;
+
+                    // --- 2D Text Label Projection Positioning ---
+                    tempV3.set(planetX, planetY, planetZ);
+                    tempV3.project(camera); 
+                    
+                    // Convert normalized space positions into precise device pixel coordinates
+                    const screenX = (tempV3.x * 0.5 + 0.5) * window.innerWidth;
+                    const screenY = (-(tempV3.y * 0.5) + 0.5) * window.innerHeight;
+                    
+                    // Dynamically calculate hover altitude offset to stay proportional with planet scales
+                    const labelYOffset = 14 + (currentPlanetScale * 25); 
+                    
+                    planet.labelEl.style.transform = `translate(-50%, -100%) translate(${screenX}px, ${screenY - labelYOffset}px)`;
+                    planet.labelEl.style.display = 'block';
+
+                    // --- Process Primordial Localized Dust Cloud Burst Effect ---
+                    if (!planet.hasSpawned) {
+                        planet.hasSpawned = true;
+                        planet.dustAge = 0.0;
+                        planet.dustPoints.visible = true;
+
+                        // Anchor the dust cloud container directly onto the planet's birth coordinate
+                        planet.dustPoints.position.set(planetX, planetY, planetZ);
+
+                        // Reset internal local positions back to the compressed baseline configurations
+                        const posAttr = planet.dustGeometry.attributes.position;
+                        for (let i = 0; i < posAttr.count; i++) {
+                            posAttr.setXYZ(
+                                i, 
+                                planet.basePositions[i * 3], 
+                                planet.basePositions[i * 3 + 1], 
+                                planet.basePositions[i * 3 + 2]
+                            );
+                        }
+                        posAttr.needsUpdate = true;
+                    }
+
+                    // Animate active particle expansions inside the localized cloud space over time
+                    if (planet.dustAge < 1.6) {
+                        planet.dustAge += delta;
+                        
+                        let opacityFactor = 0.0;
+                        if (planet.dustAge < 0.15) {
+                            opacityFactor = planet.dustAge / 0.15; 
+                        } else {
+                            opacityFactor = 1.0 - ((planet.dustAge - 0.15) / 1.45); 
+                        }
+                        planet.dustPoints.material.opacity = Math.max(0, opacityFactor * 0.95);
+
+                        // Translate particles outward in local coordinate offsets
+                        const posAttr = planet.dustGeometry.attributes.position;
+                        for (let i = 0; i < posAttr.count; i++) {
+                            let px = posAttr.getX(i) + planet.dustVelocities[i * 3] * delta;
+                            let py = posAttr.getY(i) + planet.dustVelocities[i * 3 + 1] * delta;
+                            let pz = posAttr.getZ(i) + planet.dustVelocities[i * 3 + 2] * delta;
+                            posAttr.setXYZ(i, px, py, pz);
+                        }
+                        posAttr.needsUpdate = true;
+                    } else {
+                        // Dissipated fully into vacuum
+                        planet.dustPoints.material.opacity = 0.0;
+                        planet.dustPoints.visible = false;
+                    }
+
+                } else {
+                    // Hide objects during early compression cycles
+                    planet.mesh.visible = false;
+                    planet.orbitRing.visible = false;
+                    planet.dustPoints.visible = false;
+                    planet.hasSpawned = false;
+                    planet.dustAge = 0.0;
+                    planet.labelEl.style.display = 'none';
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        // Run instantiation on assembly complete
+        window.onload = function() {
+            init();
+            requestAnimationFrame(animate);
+        };
+    </script>
+</body>
+</html>
